@@ -1,1 +1,1 @@
-siddarth ek aca h ladkahrgfia
+print("hello world")
