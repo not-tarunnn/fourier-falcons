@@ -1,0 +1,16 @@
+[Unit]
+Description=Roostoo Quant Trading Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=__USER__
+WorkingDirectory=__APP_DIR__
+ExecStart=__APP_DIR__/venv/bin/python main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

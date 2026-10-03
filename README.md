@@ -1,4 +1,6 @@
-# 🤖 Fourier Falcons Bot
+<div align="center">
+
+# 🤖 YOUR BOT NAME
 
 **An autonomous quant trading bot for the HK vs AU vs IN Quant Trading Hackathon**
 
@@ -31,7 +33,7 @@
 
 ## ✨ Highlights
 
-- 🧠 **Strategy type:** `[rule-based / ML / RL / LLM / hybrid]`
+- 🧠 **Strategy type:** rule-based **mean reversion** (rolling z-score, long-only spot)
 - ⚙️ **Fully autonomous:** every order is placed by code through the Roostoo API
 - 🛡️ **Built-in risk controls:** position sizing, stop-loss, exposure caps
 - 🧾 **Complete logging:** every trade and API response is recorded
@@ -42,38 +44,19 @@
 
 ## 🧠 Strategy
 
-> Describe your edge in 3-5 sentences. Judges review code quality *and* strategy clarity.
+**Mean reversion on rolling z-scores.** Every minute the bot samples the price of each pair and measures how far it sits from its recent average, in standard deviations (the *z-score*). Prices that stretch far below their average tend to snap back, so the bot buys the dip and sells when price returns to the mean.
 
-**Core idea:** `Explain what market inefficiency or pattern you exploit.`
-
-<details>
-<summary><b>📊 Signals & Indicators</b></summary>
-
-| Signal | Description | Weight / Role |
+| | Rule | Default |
 |---|---|---|
-| `Signal 1` | e.g. EMA crossover on 1h candles | Entry trigger |
-| `Signal 2` | e.g. RSI filter | Confirmation |
-| `Signal 3` | e.g. ATR-based volatility | Position sizing |
+| 🟢 **Entry** | z-score ≤ −`ENTRY_Z` **and** distance to mean ≥ `MIN_EDGE_PCT` | `−1.5`, `0.3%` |
+| 🔴 **Exit (target)** | z-score ≥ `EXIT_Z` (price is back at its average) | `0.0` |
+| 🛑 **Exit (stop-loss)** | price falls `STOP_LOSS_PCT` below entry | `3%` |
+| ⏱️ **Exit (time stop)** | trade hasn't reverted after `MAX_HOLD_MINUTES` | `360` min |
+| 📏 **Lookback** | `WINDOW` samples × `POLL_SECONDS` | 60 × 60s = 1 hour |
 
-</details>
+> 💡 **Why the edge filter?** Each round trip costs ~0.2% in taker fees (0.1% × 2). The bot only enters when the expected move back to the mean is large enough to pay for that.
 
-<details>
-<summary><b>🎯 Entry & Exit Logic</b></summary>
-
-- **Entry:** `condition`
-- **Exit:** `condition`
-- **Stop-loss:** `X%`
-- **Take-profit:** `Y%`
-- **Rebalance frequency:** `every N minutes/hours`
-
-</details>
-
-<details>
-<summary><b>🔬 Why it works</b></summary>
-
-`Your reasoning, backtest results, or research references.`
-
-</details>
+The bot needs one full window of data (about an hour) after a cold start before it trades. Price history is saved to `data/price_history.csv`, so restarts keep their warm-up.
 
 ---
 
@@ -94,22 +77,31 @@ flowchart LR
 
 ```
 .
-├── bot/
-│   ├── main.py            # Entry point / main loop
-│   ├── strategy.py        # Signal generation
-│   ├── risk.py            # Position sizing & risk limits
-│   ├── executor.py        # Roostoo API order handling
-│   └── logger.py          # Trade & API logging
-├── config/
-│   └── config.yaml        # Strategy parameters
-├── logs/                  # Trade logs (auto-generated)
-├── tests/
+├── main.py                       # Entry point - wires everything together
+├── app/
+│   ├── bot.py                    # Trading loop: data → signal → risk → order
+│   ├── roostoo_client.py         # Signed Roostoo API client (logs every request)
+│   └── paper_client.py           # Paper-trading client for --dry-run
+├── strategy/
+│   └── mean_reversion.py         # Z-score mean-reversion signals
+├── risk_management/
+│   └── risk_manager.py           # Position sizing, stop-loss, order throttling
+├── data_preprocessing/
+│   ├── price_buffer.py           # Rolling price history (persisted to CSV)
+│   └── features.py               # Rolling mean / std / z-score
+├── misc/
+│   ├── config.py                 # All settings (env vars / .env)
+│   ├── logger.py                 # Console + file + CSV logging
+│   ├── state.py                  # Remembers entry prices across restarts
+│   ├── utils.py                  # Rounding / formatting helpers
+│   ├── setup_ec2.sh              # One-shot AWS EC2 setup
+│   └── quantbot.service          # systemd unit (auto-restart)
 ├── requirements.txt
 ├── .env.example
 └── README.md
 ```
 
-> ✏️ Update the tree above to match your actual repo.
+Runtime output (git-ignored): `logs/trades.csv`, `logs/api_log.csv`, `logs/bot.log`, `data/price_history.csv`, `data/state.json`.
 
 ---
 
@@ -117,22 +109,17 @@ flowchart LR
 
 ### Prerequisites
 
-- Python 3.10+
-- Roostoo API credentials (provided by organizers)
-- AWS EC2 instance (provided via hackathon sub-account)
+- Python 3.9+
+- Roostoo API key + secret (provided by the organizers)
 
 ### Installation
 
 ```bash
-# Clone the repo
 git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git
 cd YOUR_REPO
 
-# Create a virtual environment
 python -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
@@ -147,43 +134,41 @@ ROOSTOO_API_KEY=your_api_key
 ROOSTOO_API_SECRET=your_api_secret
 ```
 
-> ⚠️ Never commit your `.env` file or API keys.
+All strategy and risk parameters are also set in `.env` (see [`.env.example`](.env.example)).
+
+> ⚠️ Never commit your `.env` file or API keys. It is already in `.gitignore`.
 
 ### Run
 
 ```bash
-python -m bot.main
+python main.py --dry-run --once   # smoke test: one cycle, paper trading, no orders sent
+python main.py --dry-run          # paper trade with real Roostoo prices
+python main.py                    # LIVE trading on Roostoo
 ```
 
 ---
 
 ## ☁️ Deployment
 
-The bot runs continuously on an **AWS EC2** instance.
+The bot runs 24/7 on the **AWS EC2** instance provided for the hackathon.
 
 ```bash
-# Keep the bot alive with tmux
-tmux new -s bot
-python -m bot.main
-# Detach: Ctrl+B, then D
+git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git && cd YOUR_REPO
+bash misc/setup_ec2.sh            # installs Python, venv, requirements, systemd service
+nano .env                         # add your API key and secret
+sudo systemctl start quantbot     # start trading (auto-restarts, survives reboots)
+journalctl -u quantbot -f         # watch live logs
 ```
 
 <details>
-<summary><b>Optional: run as a systemd service</b></summary>
+<summary><b>Useful commands</b></summary>
 
-```ini
-[Unit]
-Description=Quant Trading Bot
-After=network.target
-
-[Service]
-User=ubuntu
-WorkingDirectory=/home/ubuntu/YOUR_REPO
-ExecStart=/home/ubuntu/YOUR_REPO/venv/bin/python -m bot.main
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
+```bash
+sudo systemctl status quantbot    # is it running?
+sudo systemctl restart quantbot   # apply new .env settings
+sudo systemctl stop quantbot      # stop the bot
+tail -f logs/trades.csv           # every order placed
+tail -f logs/api_log.csv          # every API request + success/failure
 ```
 
 </details>
@@ -192,21 +177,25 @@ WantedBy=multi-user.target
 
 ## 🛡️ Risk Management
 
-| Control | Setting |
-|---|---|
-| Max position size | `X% of portfolio` |
-| Max total exposure | `Y%` |
-| Stop-loss | `Z%` |
-| Max drawdown guard | `N%` |
-| Order type | `Market / Limit` |
+| Control | Default | Setting |
+|---|---|---|
+| Max position size | 10% of equity per pair | `MAX_POSITION_PCT` |
+| Max total exposure | 50% of equity | `MAX_EXPOSURE_PCT` |
+| Stop-loss | 3% below entry | `STOP_LOSS_PCT` |
+| Time stop | 6 hours | `MAX_HOLD_MINUTES` |
+| Buy throttle | 10s between buys | `MIN_SECONDS_BETWEEN_BUYS` |
+| Daily order cap | 300 orders | `MAX_ORDERS_PER_DAY` |
+| Order type | Market (taker, 0.1% fee) | - |
 
 **Competition constraints respected:**
 
-- ✅ Spot trading only, no leverage
-- ✅ No high-frequency, market-making, or arbitrage strategies
-- ✅ Fees accounted for: **0.1% taker / 0.05% maker**
-- ✅ Rate-limited API calls to avoid failed requests
-- ✅ At least 8 active trading days with sufficient trades
+- ✅ Spot trading only, long-only, no leverage
+- ✅ No high-frequency, market-making, or arbitrage (one cycle per minute, a few requests each)
+- ✅ Fees accounted for: **0.1% taker**, built into the entry edge filter
+- ✅ Orders are never auto-retried, so no duplicate trades after a network error
+- ✅ Order sizes rounded down to each pair's exchange precision and minimum
+- ✅ Every order and API request logged for the trade-log integrity check
+- ✅ Fully autonomous: no manual API calls
 
 ---
 
@@ -232,8 +221,10 @@ WantedBy=multi-user.target
 - [x] Core trading loop
 - [x] Risk manager
 - [x] AWS deployment
-- [ ] `Planned improvement 1`
-- [ ] `Planned improvement 2`
+- [ ] Backtesting on collected `price_history.csv`
+- [ ] Per-pair parameter tuning
+- [ ] Volatility-scaled position sizing
+- [ ] Drawdown circuit breaker
 
 ---
 
